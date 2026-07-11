@@ -1,5 +1,20 @@
-from silence_removal.processor import build_filter_complex
+from silence_removal.processor import build_filter_complex, video_encoder_args
 from silence_removal.segments import Interval
+
+
+def test_video_encoder_args_libx264_uses_crf():
+    assert video_encoder_args("libx264") == [
+        "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+    ]
+
+
+def test_video_encoder_args_hw_encoders_include_quality():
+    # 하드웨어 인코더도 품질 목표를 지정해야 한다. 지정하지 않으면 기본
+    # 저비트레이트로 인코딩되어 원본보다 과하게 압축된다(회귀 방지).
+    for enc in ("h264_nvenc", "h264_qsv", "h264_amf"):
+        args = video_encoder_args(enc)
+        assert args[:2] == ["-c:v", enc]
+        assert len(args) > 2, f"{enc} must set a quality target, not encoder alone"
 
 
 def test_filter_complex_audio_only():
