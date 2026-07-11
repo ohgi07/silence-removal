@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from .ffmpeg_utils import detect_encoder, has_video as probe_has_video, run_ffmpeg
+from .ffmpeg_utils import detect_encoder, run_ffmpeg
 from .segments import Interval
 
 
