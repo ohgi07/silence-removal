@@ -65,6 +65,30 @@ def test_precise_video_removes_silence_and_keeps_streams(
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")
+def test_precise_handles_many_segments_over_cmdline_limit(
+    audio_with_silence, tmp_path
+):
+    # 실데이터(예: 1763 컷)처럼 세그먼트가 많으면 filter_complex 문자열이
+    # Windows 명령줄 한도(32,767자)를 넘는다. 이 경우에도 처리돼야 한다.
+    from silence_removal.segments import Interval
+
+    keep = [
+        Interval(round(i * 0.009, 3), round(i * 0.009 + 0.006, 3))
+        for i in range(600)
+    ]
+    fc, _ = build_filter_complex(keep, has_video=False)
+    # 이 그래프가 실제로 명령줄 한도를 초과함을 확인 (수정 전이라면 실행이 실패)
+    assert len(fc) > 32767
+
+    out = str(tmp_path / "many.wav")
+    process_precise(audio_with_silence, out, keep, has_video=False)
+
+    import os
+    assert os.path.exists(out)
+    assert get_duration(out) > 0
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")
 def test_copy_video_produces_playable_output(video_with_silence, tmp_path):
     from silence_removal.ffmpeg_utils import has_audio, has_video
     from silence_removal.processor import process_copy

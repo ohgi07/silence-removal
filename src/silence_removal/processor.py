@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 
 from .ffmpeg_utils import detect_encoder, run_ffmpeg
 from .segments import Interval
@@ -51,16 +52,26 @@ def build_filter_complex(
 def process_precise(
     input_path: str, output_path: str, keep: list[Interval], has_video: bool
 ) -> None:
-    """단일 패스 재인코딩으로 잘라 이어붙인다. 싱크 100% 보장."""
+    """단일 패스 재인코딩으로 잘라 이어붙인다. 싱크 100% 보장.
+
+    필터 그래프는 -filter_complex_script로 파일에 담아 넘긴다. 세그먼트가 많으면
+    (예: 수백~수천 컷) 그래프 문자열이 Windows 명령줄 한도(32,767자)를 넘기 때문.
+    """
     fc, out_map = build_filter_complex(keep, has_video)
-    args = ["-i", input_path, "-filter_complex", fc, *out_map]
-    if has_video:
-        encoder = detect_encoder()
-        args += ["-c:v", encoder]
-        if encoder == "libx264":
-            args += ["-crf", "18", "-preset", "medium"]
-    args += ["-c:a", "aac", "-b:a", "192k", output_path]
-    run_ffmpeg(args)
+    fd, script_path = tempfile.mkstemp(suffix=".ffscript", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(fc)
+        args = ["-i", input_path, "-filter_complex_script", script_path, *out_map]
+        if has_video:
+            encoder = detect_encoder()
+            args += ["-c:v", encoder]
+            if encoder == "libx264":
+                args += ["-crf", "18", "-preset", "medium"]
+        args += ["-c:a", "aac", "-b:a", "192k", output_path]
+        run_ffmpeg(args)
+    finally:
+        os.unlink(script_path)
 
 
 def process_copy(
