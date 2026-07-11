@@ -4,8 +4,11 @@ from __future__ import annotations
 import os
 import tempfile
 
-from .ffmpeg_utils import detect_encoder, run_ffmpeg
+from .ffmpeg_utils import detect_encoder, get_audio_bitrate, run_ffmpeg
 from .segments import Interval
+
+# 무손실 출력이 가능한 오디오 전용 컨테이너 → 무손실 코덱.
+_LOSSLESS_AUDIO_CODECS = {".wav": "pcm_s16le", ".flac": "flac"}
 
 
 def build_filter_complex(
@@ -71,6 +74,29 @@ def video_encoder_args(encoder: str) -> list[str]:
     return ["-c:v", encoder, *quality]
 
 
+def audio_encoder_args(
+    output_ext: str, has_video: bool, source_bitrate: int | None
+) -> list[str]:
+    """오디오 코덱/비트레이트 인자를 정한다.
+
+    precise 모드는 필터를 거치므로 오디오 재인코딩이 불가피하다. 손실을
+    최소화하기 위해:
+    - 오디오 전용 + 무손실 가능 컨테이너(wav/flac) → 무손실 코덱.
+    - 그 외(영상 파일, mp3/ogg 등 손실 컨테이너) → 소스 비트레이트에 맞춘 AAC.
+      소스 비트레이트를 모르면 192k로 폴백.
+    """
+    ext = output_ext.lower()
+    if not has_video and ext in _LOSSLESS_AUDIO_CODECS:
+        return ["-c:a", _LOSSLESS_AUDIO_CODECS[ext]]
+
+    if source_bitrate and source_bitrate > 0:
+        kbps = max(64, min(round(source_bitrate / 1000), 512))
+        bitrate = f"{kbps}k"
+    else:
+        bitrate = "192k"
+    return ["-c:a", "aac", "-b:a", bitrate]
+
+
 def process_precise(
     input_path: str, output_path: str, keep: list[Interval], has_video: bool
 ) -> None:
@@ -87,7 +113,9 @@ def process_precise(
         args = ["-i", input_path, "-filter_complex_script", script_path, *out_map]
         if has_video:
             args += video_encoder_args(detect_encoder())
-        args += ["-c:a", "aac", "-b:a", "192k", output_path]
+        ext = os.path.splitext(output_path)[1]
+        args += audio_encoder_args(ext, has_video, get_audio_bitrate(input_path))
+        args += [output_path]
         run_ffmpeg(args)
     finally:
         os.unlink(script_path)

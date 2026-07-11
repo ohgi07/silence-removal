@@ -1,5 +1,41 @@
-from silence_removal.processor import build_filter_complex, video_encoder_args
+from silence_removal.processor import (
+    audio_encoder_args,
+    build_filter_complex,
+    video_encoder_args,
+)
 from silence_removal.segments import Interval
+
+
+def test_audio_only_wav_is_lossless_pcm():
+    assert audio_encoder_args(".wav", has_video=False, source_bitrate=256000) == [
+        "-c:a", "pcm_s16le",
+    ]
+
+
+def test_audio_only_flac_is_lossless():
+    assert audio_encoder_args(".flac", has_video=False, source_bitrate=None) == [
+        "-c:a", "flac",
+    ]
+
+
+def test_audio_matches_source_bitrate():
+    # 소스 256kbps → 출력도 256k AAC
+    assert audio_encoder_args(".mp4", has_video=True, source_bitrate=256000) == [
+        "-c:a", "aac", "-b:a", "256k",
+    ]
+
+
+def test_audio_unknown_bitrate_falls_back_to_192k():
+    assert audio_encoder_args(".mp4", has_video=True, source_bitrate=None) == [
+        "-c:a", "aac", "-b:a", "192k",
+    ]
+
+
+def test_audio_only_lossy_container_matches_bitrate_not_lossless():
+    # mp3는 무손실이 불가능한 컨테이너 → 소스 비트레이트로 AAC 인코딩
+    assert audio_encoder_args(".mp3", has_video=False, source_bitrate=128000) == [
+        "-c:a", "aac", "-b:a", "128k",
+    ]
 
 
 def test_video_encoder_args_libx264_uses_crf():

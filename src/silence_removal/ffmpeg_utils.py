@@ -51,6 +51,21 @@ def get_duration(path: str) -> float:
     return float(out)
 
 
+def get_audio_bitrate(path: str) -> int | None:
+    """첫 오디오 스트림의 비트레이트(bps). 알 수 없으면 None.
+
+    일부 컨테이너는 스트림 비트레이트를 'N/A'로 보고하는데, 그 경우 None.
+    """
+    out = _ffprobe(
+        ["-select_streams", "a:0", "-show_entries", "stream=bit_rate",
+         "-of", "default=nk=1:nw=1", path]
+    )
+    try:
+        return int(out)
+    except (ValueError, TypeError):
+        return None
+
+
 def has_audio(path: str) -> bool:
     """오디오 스트림이 하나라도 있는지."""
     out = _ffprobe(
