@@ -42,3 +42,45 @@ def test_precise_audio_removes_silence(audio_with_silence, tmp_path):
     # 원본 6초, 무음 2초 중 0.3초만 남김 → 약 4.3초
     result_dur = get_duration(out)
     assert 4.0 < result_dur < 4.6
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")
+def test_precise_video_removes_silence_and_keeps_streams(
+    video_with_silence, tmp_path
+):
+    from silence_removal.ffmpeg_utils import has_audio, has_video
+    from silence_removal.segments import compute_keep_segments
+
+    silences, total = detect_silences(
+        video_with_silence, threshold_db=-30, min_silence=0.5
+    )
+    keep = compute_keep_segments(silences, total, keep_silence=0.3)
+
+    out = str(tmp_path / "out.mp4")
+    process_precise(video_with_silence, out, keep, has_video=True)
+
+    assert 4.0 < get_duration(out) < 4.6
+    assert has_video(out) is True
+    assert has_audio(out) is True
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")
+def test_copy_video_produces_playable_output(video_with_silence, tmp_path):
+    from silence_removal.ffmpeg_utils import has_audio, has_video
+    from silence_removal.processor import process_copy
+    from silence_removal.segments import compute_keep_segments
+
+    silences, total = detect_silences(
+        video_with_silence, threshold_db=-30, min_silence=0.5
+    )
+    keep = compute_keep_segments(silences, total, keep_silence=0.3)
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    out = str(tmp_path / "out_copy.mkv")
+    process_copy(video_with_silence, out, keep, str(workdir))
+
+    # copy는 키프레임 스냅이라 정확한 길이는 다를 수 있으나, 재생 가능한 A/V가 있어야 함
+    assert has_video(out) is True
+    assert has_audio(out) is True
+    assert get_duration(out) > 0
