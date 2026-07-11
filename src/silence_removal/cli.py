@@ -34,7 +34,9 @@ def discover_inputs(path: str) -> list[str]:
         found = []
         for name in sorted(os.listdir(path)):
             full = os.path.join(path, name)
-            if os.path.isfile(full) and os.path.splitext(name)[1].lower() in MEDIA_EXTS:
+            if (os.path.isfile(full)
+                    and os.path.splitext(name)[1].lower() in MEDIA_EXTS
+                    and not os.path.splitext(name)[0].endswith("_trimmed")):
                 found.append(full)
         return found
     return []
@@ -157,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"처리할 미디어 파일이 없습니다: {args.input}", file=sys.stderr)
         return EXIT_USAGE
 
-    if args.output:
+    if args.output and not args.dry_run:
         os.makedirs(args.output, exist_ok=True)
 
     results = []

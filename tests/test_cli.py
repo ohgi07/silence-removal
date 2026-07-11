@@ -16,6 +16,14 @@ def test_discover_folder_filters_media(tmp_path):
     assert names == ["a.mp4", "b.wav"]
 
 
+def test_discover_folder_excludes_trimmed_outputs(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    (tmp_path / "a_trimmed.mp4").write_bytes(b"x")
+    found = discover_inputs(str(tmp_path))
+    names = sorted(p.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for p in found)
+    assert names == ["a.mp4"]
+
+
 def test_output_path_default_suffix(tmp_path):
     src = str(tmp_path / "rec.mp4")
     out = output_path_for(src, output_dir=None)
