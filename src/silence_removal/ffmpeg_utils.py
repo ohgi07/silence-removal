@@ -12,6 +12,11 @@ class FFmpegNotFound(Exception):
 # 선호 순서: NVIDIA → Intel QSV → AMD → 소프트웨어
 _HW_PREFERENCE = ["h264_nvenc", "h264_qsv", "h264_amf"]
 
+# 디코드용 하드웨어 가속 선호 순서.
+#   cuda(NVIDIA)·qsv(Intel)는 벤더 전용, d3d11va·dxva2는 Windows 범용(AMD 포함),
+#   vaapi는 Linux. -hwaccel은 코덱 미지원 시 소프트웨어로 자동 폴백하므로 안전하다.
+_HWACCEL_PREFERENCE = ["cuda", "qsv", "d3d11va", "dxva2", "vaapi"]
+
 
 def ensure_ffmpeg() -> None:
     """ffmpeg와 ffprobe가 설치돼 있는지 확인. 없으면 FFmpegNotFound."""
@@ -104,3 +109,29 @@ def detect_encoder() -> str:
         check=True,
     )
     return pick_hw_encoder(result.stdout)
+
+
+def pick_hwaccel(hwaccels_output: str) -> str | None:
+    """`ffmpeg -hwaccels` 출력에서 디코드에 쓸 하드웨어 가속 방식을 고른다.
+
+    각 방식은 한 줄에 하나씩 나온다. 선호 순서상 처음 발견되는 것을,
+    아무 가속도 없으면 None(소프트웨어 디코드)을 반환한다.
+    """
+    available = {
+        line.strip() for line in hwaccels_output.splitlines() if line.strip()
+    }
+    for hw in _HWACCEL_PREFERENCE:
+        if hw in available:
+            return hw
+    return None
+
+
+def detect_hwaccel() -> str | None:
+    """현재 시스템에서 디코드에 쓸 하드웨어 가속 방식. 없으면 None."""
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-hwaccels"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return pick_hwaccel(result.stdout)

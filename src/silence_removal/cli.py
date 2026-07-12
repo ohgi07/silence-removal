@@ -96,7 +96,8 @@ def _process_one(path: str, args) -> dict:
             with tempfile.TemporaryDirectory() as wd:
                 process_copy(path, out, keep, wd)
         else:
-            process_precise(path, out, keep, vid)
+            hwaccel = None if args.no_hwaccel else "auto"
+            process_precise(path, out, keep, vid, hwaccel=hwaccel)
 
         out_sec = get_duration(out)
         return {
@@ -132,6 +133,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="잘라낸 무음에 남길 총 길이(초), 앞뒤 절반씩 (기본: 0.3)")
     p.add_argument("--copy", action="store_true",
                    help="빠른 무손실 모드(키프레임 스냅, 싱크 미세오차 감수)")
+    p.add_argument("--no-hwaccel", action="store_true",
+                   help="precise 모드에서 디코드 하드웨어 가속을 끄고 소프트웨어 디코드 사용")
     p.add_argument("--dry-run", action="store_true",
                    help="처리 없이 예상 결과만 출력")
     p.add_argument("--json", action="store_true", dest="as_json",

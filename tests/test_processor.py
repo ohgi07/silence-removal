@@ -72,11 +72,92 @@ def test_filter_complex_with_video():
 
 
 import shutil
+import subprocess
+
 import pytest
 
 from silence_removal.detector import detect_silences
 from silence_removal.ffmpeg_utils import get_duration
 from silence_removal.processor import process_precise
+
+
+def _patch_precise_ffmpeg(monkeypatch, hwaccel, fail_hwaccel=False):
+    """process_precise가 실제 ffmpeg를 부르지 않게 하고 호출 인자를 수집한다.
+
+    반환한 리스트에 run_ffmpeg로 넘어간 args가 순서대로 쌓인다.
+    """
+    calls: list[list[str]] = []
+
+    def fake_run(args):
+        calls.append(args)
+        if fail_hwaccel and args[:1] == ["-hwaccel"]:
+            raise subprocess.CalledProcessError(1, ["ffmpeg", *args], stderr="hw fail")
+        return None
+
+    monkeypatch.setattr("silence_removal.processor.run_ffmpeg", fake_run)
+    monkeypatch.setattr("silence_removal.processor.detect_hwaccel", lambda: hwaccel)
+    monkeypatch.setattr("silence_removal.processor.detect_encoder", lambda: "h264_nvenc")
+    monkeypatch.setattr(
+        "silence_removal.processor.get_audio_bitrate", lambda path: 128000
+    )
+    return calls
+
+
+def test_precise_uses_hwaccel_decode_when_available(monkeypatch, tmp_path):
+    from silence_removal.segments import Interval
+
+    calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda")
+    process_precise("in.mp4", str(tmp_path / "o.mp4"),
+                    [Interval(0.0, 1.0)], has_video=True)
+
+    assert len(calls) == 1
+    assert calls[0][:2] == ["-hwaccel", "cuda"]
+
+
+def test_precise_falls_back_to_software_when_hwaccel_init_fails(monkeypatch, tmp_path):
+    from silence_removal.segments import Interval
+
+    calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda", fail_hwaccel=True)
+    process_precise("in.mp4", str(tmp_path / "o.mp4"),
+                    [Interval(0.0, 1.0)], has_video=True)
+
+    assert len(calls) == 2
+    assert calls[0][:2] == ["-hwaccel", "cuda"]
+    assert "-hwaccel" not in calls[1]  # 두 번째 시도는 소프트웨어 디코드
+
+
+def test_precise_software_decode_when_no_hwaccel(monkeypatch, tmp_path):
+    from silence_removal.segments import Interval
+
+    calls = _patch_precise_ffmpeg(monkeypatch, hwaccel=None)
+    process_precise("in.mp4", str(tmp_path / "o.mp4"),
+                    [Interval(0.0, 1.0)], has_video=True)
+
+    assert len(calls) == 1
+    assert "-hwaccel" not in calls[0]
+
+
+def test_precise_explicit_none_forces_software_even_if_available(monkeypatch, tmp_path):
+    from silence_removal.segments import Interval
+
+    calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda")
+    process_precise("in.mp4", str(tmp_path / "o.mp4"),
+                    [Interval(0.0, 1.0)], has_video=True, hwaccel=None)
+
+    assert len(calls) == 1
+    assert "-hwaccel" not in calls[0]
+
+
+def test_precise_audio_only_skips_hwaccel(monkeypatch, tmp_path):
+    # 오디오 전용 작업엔 영상 디코드 가속이 의미 없으므로 붙이지 않는다.
+    from silence_removal.segments import Interval
+
+    calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda")
+    process_precise("in.wav", str(tmp_path / "o.wav"),
+                    [Interval(0.0, 1.0)], has_video=False)
+
+    assert len(calls) == 1
+    assert "-hwaccel" not in calls[0]
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")
