@@ -60,7 +60,32 @@ def build_summary(results: list[dict]) -> dict:
     return summary
 
 
-def _process_one(path: str, args) -> dict:
+def format_bar(frac: float, width: int = 30) -> str:
+    """진행률(0.0~1.0)을 텍스트 막대로. 범위를 벗어나면 클램프한다."""
+    frac = max(0.0, min(1.0, frac))
+    filled = int(frac * width)
+    bar = "#" * filled + "-" * (width - filled)
+    return f"[{bar}] {frac * 100:5.1f}%"
+
+
+def _progress_enabled(args) -> bool:
+    """진행바를 그릴지 여부. JSON 출력이거나 터미널이 아니면 그리지 않는다.
+
+    (리다이렉트된 로그나 에이전트 출력에 캐리지리턴 잔여물이 섞이지 않게 함)
+    """
+    return not args.as_json and sys.stderr.isatty()
+
+
+def _make_progress_callback():
+    """stderr에 제자리 갱신되는 진행바 콜백을 만든다. 100%에서 줄바꿈."""
+    def cb(frac: float) -> None:
+        end = "\n" if frac >= 1.0 else ""
+        sys.stderr.write("\r  " + format_bar(frac) + end)
+        sys.stderr.flush()
+    return cb
+
+
+def _process_one(path: str, args, on_progress=None) -> dict:
     """파일 하나 처리. 결과 dict 반환(예외를 던지지 않음)."""
     try:
         if not has_audio(path):
@@ -94,10 +119,11 @@ def _process_one(path: str, args) -> dict:
         vid = has_video(path)
         if mode == "copy":
             with tempfile.TemporaryDirectory() as wd:
-                process_copy(path, out, keep, wd)
+                process_copy(path, out, keep, wd, on_progress=on_progress)
         else:
             hwaccel = None if args.no_hwaccel else "auto"
-            process_precise(path, out, keep, vid, hwaccel=hwaccel)
+            process_precise(path, out, keep, vid, hwaccel=hwaccel,
+                            on_progress=on_progress)
 
         out_sec = get_duration(out)
         return {
@@ -166,9 +192,11 @@ def main(argv: list[str] | None = None) -> int:
         os.makedirs(args.output, exist_ok=True)
 
     results = []
+    show_progress = _progress_enabled(args)
     for path in inputs:
         print(f"처리 중: {path}", file=sys.stderr)
-        r = _process_one(path, args)
+        cb = _make_progress_callback() if show_progress else None
+        r = _process_one(path, args, on_progress=cb)
         results.append(r)
         if not args.as_json:
             if r["status"] == "ok":

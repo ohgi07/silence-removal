@@ -5,3 +5,4 @@ __pycache__/
 build/
 dist/
 /tmp_test_media/
+outputs/

@@ -1,6 +1,5 @@
 from silence_removal.processor import (
     audio_encoder_args,
-    build_filter_complex,
     video_encoder_args,
 )
 from silence_removal.segments import Interval
@@ -38,6 +37,24 @@ def test_audio_only_lossy_container_matches_bitrate_not_lossless():
     ]
 
 
+def test_process_precise_reports_progress(audio_with_silence, tmp_path):
+    from silence_removal.detector import detect_silences
+    from silence_removal.processor import process_precise
+    from silence_removal.segments import compute_keep_segments
+
+    silences, total = detect_silences(audio_with_silence, threshold_db=-30, min_silence=0.5)
+    keep = compute_keep_segments(silences, total, keep_silence=0.3)
+
+    fracs: list[float] = []
+    out = str(tmp_path / "out.wav")
+    process_precise(audio_with_silence, out, keep, has_video=False, on_progress=fracs.append)
+
+    assert fracs, "진행 콜백이 최소 한 번은 호출되어야 한다"
+    assert fracs == sorted(fracs), "진행률은 단조 증가해야 한다"
+    assert all(0.0 <= f <= 1.0 for f in fracs)
+    assert fracs[-1] == 1.0, "마지막 진행률은 100%여야 한다"
+
+
 def test_video_encoder_args_libx264_uses_crf():
     assert video_encoder_args("libx264") == [
         "-c:v", "libx264", "-crf", "18", "-preset", "medium",
@@ -53,24 +70,6 @@ def test_video_encoder_args_hw_encoders_include_quality():
         assert len(args) > 2, f"{enc} must set a quality target, not encoder alone"
 
 
-def test_filter_complex_audio_only():
-    keep = [Interval(0.0, 2.0), Interval(4.0, 6.0)]
-    fc, out_map = build_filter_complex(keep, has_video=False)
-    assert "atrim=start=0.0:end=2.0" in fc
-    assert "atrim=start=4.0:end=6.0" in fc
-    assert "concat=n=2:v=0:a=1" in fc
-    assert out_map == ["-map", "[outa]"]
-
-
-def test_filter_complex_with_video():
-    keep = [Interval(0.0, 2.0), Interval(4.0, 6.0)]
-    fc, out_map = build_filter_complex(keep, has_video=True)
-    assert "trim=start=0.0:end=2.0" in fc
-    assert "atrim=start=0.0:end=2.0" in fc
-    assert "concat=n=2:v=1:a=1" in fc
-    assert out_map == ["-map", "[outv]", "-map", "[outa]"]
-
-
 import shutil
 import subprocess
 
@@ -84,7 +83,8 @@ from silence_removal.processor import process_precise
 def _patch_precise_ffmpeg(monkeypatch, hwaccel, fail_hwaccel=False):
     """process_precise가 실제 ffmpeg를 부르지 않게 하고 호출 인자를 수집한다.
 
-    반환한 리스트에 run_ffmpeg로 넘어간 args가 순서대로 쌓인다.
+    process_precise는 keep 구간마다 run_ffmpeg를 한 번씩 호출한 뒤 마지막에
+    concat을 호출한다. 반환 리스트에 각 호출 args가 순서대로 쌓인다.
     """
     calls: list[list[str]] = []
 
@@ -103,61 +103,71 @@ def _patch_precise_ffmpeg(monkeypatch, hwaccel, fail_hwaccel=False):
     return calls
 
 
-def test_precise_uses_hwaccel_decode_when_available(monkeypatch, tmp_path):
-    from silence_removal.segments import Interval
+def _seg_calls(calls):
+    """세그먼트 인코딩 호출만(마지막 concat 호출 제외)."""
+    return [c for c in calls if c[:1] != ["-f"]]
 
+
+def _concat_call(calls):
+    return next(c for c in calls if c[:1] == ["-f"])
+
+
+def test_precise_uses_hwaccel_decode_on_each_segment(monkeypatch, tmp_path):
     calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda")
     process_precise("in.mp4", str(tmp_path / "o.mp4"),
-                    [Interval(0.0, 1.0)], has_video=True)
+                    [Interval(0.0, 1.0), Interval(2.0, 3.0)], has_video=True)
 
-    assert len(calls) == 1
-    assert calls[0][:2] == ["-hwaccel", "cuda"]
+    seg = _seg_calls(calls)
+    assert len(seg) == 2
+    for c in seg:
+        assert c[:2] == ["-hwaccel", "cuda"]
+    # 세그먼트 오디오는 무손실 PCM으로 담는다(조인 priming 방지).
+    assert "pcm_s16le" in seg[0]
+    # concat 단계는 디코드 가속 불필요, 비디오는 copy.
+    assert "-hwaccel" not in _concat_call(calls)
+    assert ["-c:v", "copy"] == _concat_call(calls)[6:8]
 
 
 def test_precise_falls_back_to_software_when_hwaccel_init_fails(monkeypatch, tmp_path):
-    from silence_removal.segments import Interval
-
     calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda", fail_hwaccel=True)
     process_precise("in.mp4", str(tmp_path / "o.mp4"),
-                    [Interval(0.0, 1.0)], has_video=True)
+                    [Interval(0.0, 1.0), Interval(2.0, 3.0)], has_video=True)
 
-    assert len(calls) == 2
-    assert calls[0][:2] == ["-hwaccel", "cuda"]
-    assert "-hwaccel" not in calls[1]  # 두 번째 시도는 소프트웨어 디코드
+    seg = _seg_calls(calls)
+    # 첫 구간: 가속 시도(실패) → 소프트웨어 재시도. 이후 구간은 바로 소프트웨어.
+    assert seg[0][:2] == ["-hwaccel", "cuda"]      # 실패한 시도
+    assert "-hwaccel" not in seg[1]                # 같은 구간 소프트웨어 재시도
+    assert "-hwaccel" not in seg[2]                # 다음 구간도 소프트웨어
 
 
 def test_precise_software_decode_when_no_hwaccel(monkeypatch, tmp_path):
-    from silence_removal.segments import Interval
-
     calls = _patch_precise_ffmpeg(monkeypatch, hwaccel=None)
     process_precise("in.mp4", str(tmp_path / "o.mp4"),
                     [Interval(0.0, 1.0)], has_video=True)
 
-    assert len(calls) == 1
-    assert "-hwaccel" not in calls[0]
+    for c in _seg_calls(calls):
+        assert "-hwaccel" not in c
 
 
 def test_precise_explicit_none_forces_software_even_if_available(monkeypatch, tmp_path):
-    from silence_removal.segments import Interval
-
     calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda")
     process_precise("in.mp4", str(tmp_path / "o.mp4"),
                     [Interval(0.0, 1.0)], has_video=True, hwaccel=None)
 
-    assert len(calls) == 1
-    assert "-hwaccel" not in calls[0]
+    for c in _seg_calls(calls):
+        assert "-hwaccel" not in c
 
 
 def test_precise_audio_only_skips_hwaccel(monkeypatch, tmp_path):
     # 오디오 전용 작업엔 영상 디코드 가속이 의미 없으므로 붙이지 않는다.
-    from silence_removal.segments import Interval
-
     calls = _patch_precise_ffmpeg(monkeypatch, hwaccel="cuda")
     process_precise("in.wav", str(tmp_path / "o.wav"),
                     [Interval(0.0, 1.0)], has_video=False)
 
-    assert len(calls) == 1
-    assert "-hwaccel" not in calls[0]
+    for c in _seg_calls(calls):
+        assert "-hwaccel" not in c
+    # 오디오 전용은 concat에 비디오 copy가 없어야 한다.
+    assert "-c:v" not in _concat_call(calls)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")
@@ -197,27 +207,24 @@ def test_precise_video_removes_silence_and_keeps_streams(
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")
-def test_precise_handles_many_segments_over_cmdline_limit(
-    audio_with_silence, tmp_path
-):
-    # 실데이터(예: 1763 컷)처럼 세그먼트가 많으면 filter_complex 문자열이
-    # Windows 명령줄 한도(32,767자)를 넘는다. 이 경우에도 처리돼야 한다.
+def test_precise_handles_many_segments(audio_with_silence, tmp_path):
+    # 컷이 많은 실데이터(수백~수천 세그먼트) 회귀 방지. 구간별 처리는 각 호출이
+    # 세그먼트 하나라 필터그래프가 짧고, 세그먼트 수에 선형으로 확장된다(과거
+    # 단일 filter_complex 방식은 여기서 급격히 느려져 대용량 파일에서 멈췄다).
     from silence_removal.segments import Interval
 
+    # 6초 클립을 40개의 0.1초 구간으로 → 이어붙이면 약 4초.
     keep = [
-        Interval(round(i * 0.009, 3), round(i * 0.009 + 0.006, 3))
-        for i in range(600)
+        Interval(round(i * 0.15, 3), round(i * 0.15 + 0.1, 3))
+        for i in range(40)
     ]
-    fc, _ = build_filter_complex(keep, has_video=False)
-    # 이 그래프가 실제로 명령줄 한도를 초과함을 확인 (수정 전이라면 실행이 실패)
-    assert len(fc) > 32767
-
     out = str(tmp_path / "many.wav")
     process_precise(audio_with_silence, out, keep, has_video=False)
 
     import os
     assert os.path.exists(out)
-    assert get_duration(out) > 0
+    # 이어붙인 길이가 keep 총합(4.0초)에 근접해야 한다(구간 누락/중복 없음).
+    assert abs(get_duration(out) - 4.0) < 0.3
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg 필요")

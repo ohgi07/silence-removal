@@ -1,4 +1,20 @@
-from silence_removal.cli import discover_inputs, build_summary, output_path_for
+from silence_removal.cli import (
+    build_summary,
+    discover_inputs,
+    format_bar,
+    output_path_for,
+)
+
+
+def test_format_bar_half():
+    s = format_bar(0.5, width=10)
+    assert s.count("#") == 5
+    assert "50.0%" in s
+
+
+def test_format_bar_clamps_out_of_range():
+    assert format_bar(1.5, width=10).count("#") == 10
+    assert format_bar(-0.5, width=10).count("#") == 0
 
 
 def test_discover_single_file(tmp_path):
