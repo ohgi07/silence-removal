@@ -63,3 +63,6 @@ precise 모드는 필터를 거쳐 오디오를 재인코딩합니다. 손실을
 pip install -e ".[dev]"
 pytest
 ```
+
+## 라이선스
+[MIT](LICENSE)
