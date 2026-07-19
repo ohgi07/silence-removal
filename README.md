@@ -16,7 +16,7 @@ pip install -e .
 ```bash
 silence-removal recording.mp4               # 파일 하나
 silence-removal ./recordings                # 폴더 일괄
-silence-removal talk.mp4 --keep-silence 0.5  # 무음 0.5초 남김
+silence-removal talk.mp4 --keep-silence 0.3  # 무음 0.3초 남김
 silence-removal talk.mp4 --copy              # 빠른 무손실 모드
 silence-removal ./videos --dry-run --json    # 예상 결과만(에이전트용)
 ```
@@ -24,9 +24,9 @@ silence-removal ./videos --dry-run --json    # 예상 결과만(에이전트용)
 ## 주요 옵션
 | 옵션 | 설명 | 기본 |
 |------|------|------|
-| `--threshold DB` | 무음 기준 dB | -30 |
-| `--min-silence SEC` | 이 길이 이상만 무음 처리 | 0.5 |
-| `--keep-silence SEC` | 잘라낸 무음에 남길 총 길이(앞뒤 절반씩) | 0.3 |
+| `--threshold DB` | 무음 기준 dB | -60 |
+| `--min-silence SEC` | 이 길이 이상만 무음 처리 | 0.8 |
+| `--keep-silence SEC` | 잘라낸 무음에 남길 총 길이(앞뒤 절반씩) | 0.5 |
 | `--copy` | 무손실 스트림복사(빠름, 싱크 미세오차 감수) | precise |
 | `--dry-run` | 처리 없이 예상 결과만 | - |
 | `--json` | stdout에 JSON 출력 | - |

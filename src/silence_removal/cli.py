@@ -151,12 +151,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("input", nargs="?", help="파일 또는 폴더 경로")
     p.add_argument("-o", "--output", help="출력 폴더 (기본: 원본 옆 *_trimmed)")
-    p.add_argument("--threshold", type=float, default=-30,
-                   help="무음 기준 dB (기본: -30)")
-    p.add_argument("--min-silence", type=float, default=0.5,
-                   help="이 길이(초) 이상만 무음 처리 (기본: 0.5)")
-    p.add_argument("--keep-silence", type=float, default=0.3,
-                   help="잘라낸 무음에 남길 총 길이(초), 앞뒤 절반씩 (기본: 0.3)")
+    p.add_argument("--threshold", type=float, default=-60,
+                   help="무음 기준 dB (기본: -60)")
+    p.add_argument("--min-silence", type=float, default=0.8,
+                   help="이 길이(초) 이상만 무음 처리 (기본: 0.8)")
+    p.add_argument("--keep-silence", type=float, default=0.5,
+                   help="잘라낸 무음에 남길 총 길이(초), 앞뒤 절반씩 (기본: 0.5)")
     p.add_argument("--copy", action="store_true",
                    help="빠른 무손실 모드(키프레임 스냅, 싱크 미세오차 감수)")
     p.add_argument("--no-hwaccel", action="store_true",
